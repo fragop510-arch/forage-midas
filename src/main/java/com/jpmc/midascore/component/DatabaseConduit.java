@@ -2,6 +2,7 @@ package com.jpmc.midascore.component;
 
 import com.jpmc.midascore.entity.TransactionRecord;
 import com.jpmc.midascore.entity.UserRecord;
+import com.jpmc.midascore.foundation.Incentive;
 import com.jpmc.midascore.foundation.Transaction;
 import com.jpmc.midascore.repository.TransactionRecordRepository;
 import com.jpmc.midascore.repository.UserRepository;
@@ -12,21 +13,22 @@ public class DatabaseConduit {
 
     private final UserRepository userRepository;
     private final TransactionRecordRepository transactionRecordRepository;
+    private final IncentiveClient incentiveClient;
 
     public DatabaseConduit(
             UserRepository userRepository,
-            TransactionRecordRepository transactionRecordRepository) {
+            TransactionRecordRepository transactionRecordRepository,
+            IncentiveClient incentiveClient) {
 
         this.userRepository = userRepository;
         this.transactionRecordRepository = transactionRecordRepository;
+        this.incentiveClient = incentiveClient;
     }
-
 
     // Used by UserPopulator to save users
     public void save(UserRecord userRecord) {
         userRepository.save(userRecord);
     }
-
 
     // Used by Kafka Listener to process transactions
     public void process(Transaction transaction) {
@@ -44,31 +46,35 @@ public class DatabaseConduit {
             return;
         }
 
+        // Call Incentive API
+        Incentive incentive = incentiveClient.getIncentive(transaction);
+
+        float incentiveAmount = 0.0f;
+
+        if (incentive != null) {
+            incentiveAmount = incentive.getAmount();
+        }
 
         // Update balances
         sender.setBalance(sender.getBalance() - transaction.getAmount());
-        recipient.setBalance(recipient.getBalance() + transaction.getAmount());
 
+        recipient.setBalance(
+                recipient.getBalance()
+                        + transaction.getAmount()
+                        + incentiveAmount
+        );
 
         // Save updated users
         userRepository.save(sender);
         userRepository.save(recipient);
 
-
-        // Print balances to find waldorf's final balance
-        System.out.println("Sender: " + sender.getName() +
-                " Balance: " + sender.getBalance());
-
-        System.out.println("Recipient: " + recipient.getName() +
-                " Balance: " + recipient.getBalance());
-
-
-        // Save transaction record
+        // Save transaction record with incentive
         TransactionRecord transactionRecord =
                 new TransactionRecord(
                         sender,
                         recipient,
-                        transaction.getAmount()
+                        transaction.getAmount(),
+                        incentiveAmount
                 );
 
         transactionRecordRepository.save(transactionRecord);
